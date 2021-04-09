@@ -1,8 +1,9 @@
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity >=0.7.0 <0.9.0;
 
-contract ContractLender {
+contract LenderContract {
     address private owner;
-    uint256 balance;
+    uint256 private balance;
     
     enum LoanState{ REQUESTED, GRANTED, DENIED, PAID_BACK }
     
@@ -19,8 +20,10 @@ contract ContractLender {
     mapping(address => uint[]) public clientToLoansId;
     uint[] public requestIds;
     
-    uint rate = 1;
-    uint id = 1;
+    uint rateInBps = 20;
+    uint nextId = 1;
+    
+    LenderContract public secondBank = LenderContract(0x97af3436acA4c78b9d431c43a0Ae5479eCbB796D);
     
     constructor() {
         owner = msg.sender;
@@ -44,19 +47,43 @@ contract ContractLender {
     }
     
     function request(uint amount) public returns (uint){
-        Loan memory myLoan; //TODO: Change
-        myLoan.id = id;
-        myLoan.borrower = msg.sender;
-        myLoan.amountBorrowed = amount * 100;
-        myLoan.amountLeft = amount * (100 * rate);
-        myLoan.loanRate = rate;
-        myLoan.state;
-        
-        idToLoan[id] = myLoan;
-        clientToLoansId[msg.sender].push(myLoan.id);
-        requestIds.push(id);
-        
-        id++;
-        return myLoan.id;
+        Loan memory loan = Loan({
+            id: nextId,
+            borrower: msg.sender,
+            amountBorrowed: amount,
+            amountLeft: amount * (1 + rateInBps/1000),
+            loanRate: rateInBps,
+            state: LoanState.REQUESTED
+        });
+        idToLoan[loan.id] = loan;
+        clientToLoansId[msg.sender].push(loan.id);
+        requestIds.push(loan.id);
+        nextId++;
+        return loan.id;
+    }
+    
+    function getRequestIds() public view returns (uint[] memory) {
+        return requestIds;
+    }
+    
+    function respondToLoan(uint _loanId, bool _accepted) public isOwner {
+        require(requestIds[_loanId] != 0, "This loan does not exist or has already been responded to.");
+        if(_accepted) {
+            require(balance > idToLoan[_loanId].amountBorrowed, "Contract has insufficient funds");
+            idToLoan[_loanId].state = LoanState.GRANTED;
+            payable(idToLoan[_loanId].borrower).transfer(idToLoan[_loanId].amountBorrowed);
+        } else {
+            idToLoan[_loanId].state = LoanState.DENIED;
+        }
+        delete requestIds[_loanId];
+    }
+    
+    function replayLoan(uint _loanId) public payable {
+        require(idToLoan[_loanId].id != 0, "This loan does not exist.");
+        require(idToLoan[_loanId].amountLeft - msg.value < 0, "Too much money.");
+        idToLoan[_loanId].amountLeft -= msg.value;
+        if(idToLoan[_loanId].amountLeft == 0) {
+            idToLoan[_loanId].state = LoanState.PAID_BACK;
+        }
     }
 }
